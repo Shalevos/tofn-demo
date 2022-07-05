@@ -1,0 +1,24 @@
+[package]
+name = "tofn-demo"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tofn = { git = "https://github.com/axelarnetwork/tofn.git", branch = "main" }
+
+# k256 baggage
+k256 = { version = "0.9", features = ["ecdsa", "zeroize"], default-features = false }
+ecdsa = { version = "0.12", features = ["digest"], default-features = false } # needed only for FromDigest trait
+rand = "0.8"
+sha2 = { version = "0.9", features = ["std", "asm"], default-features = false }
+sha3 = { version = "0.9", default-features = false }
+
+# logging
+tracing = {version = "0.1", default-features = false}
+tracing-subscriber = { version = "0", features = ["env-filter", "fmt"], default-features = false }
+
+[dev-dependencies]
+tracing-test = "0" # enable logging for tests
+criterion = "0.3"
