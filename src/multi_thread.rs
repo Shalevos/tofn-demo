@@ -1,4 +1,5 @@
 use crate::common::keygen;
+use crate::party;
 use broadcaster::Broadcaster;
 use ecdsa::{elliptic_curve::sec1::FromEncodedPoint, hazmat::VerifyPrimitive};
 use std::{convert::TryFrom, sync::mpsc, thread};
@@ -11,7 +12,6 @@ use tofn::{
     sdk::api::PartyShareCounts,
 };
 use tracing::debug;
-use crate::party;
 
 #[cfg(feature = "malicious")]
 use tofn::gg20::sign;
@@ -19,14 +19,18 @@ use tofn::gg20::sign;
 pub fn basic_correctness() {
     set_up_logs();
 
-    let party_share_counts = PartyShareCounts::from_vec(vec![1, 2, 3, 4]).unwrap(); // 10 total shares
-    let threshold = 5;
+    let party_share_counts = PartyShareCounts::from_vec(vec![1, 1, 1, 1, 1]).unwrap(); // 10 total shares
+    let threshold = 2; // 3/5
 
     // keygen
     debug!("start keygen");
+
     let keygen_shares = keygen::initialize_honest_parties(&party_share_counts, threshold);
+    //
     let (keygen_broadcaster, keygen_receivers) =
         Broadcaster::new(party_share_counts.total_share_count());
+    // This line of code essentially decides on the communication channel for everything!
+    // TODO: implement some struct that has implements Sender and Receiver s.t. it communicates with your relay server and then you're done!
     let (keygen_result_sender, keygen_result_receiver) = mpsc::channel();
     for ((_, keygen_share), keygen_receiver) in
         keygen_shares.into_iter().zip(keygen_receivers.into_iter())
@@ -44,6 +48,7 @@ pub fn basic_correctness() {
     drop(keygen_result_sender); // so that result_receiver can close
 
     // collect keygen output
+    // each receiver is for each party so here we see they all have their own key shares
     let mut secret_key_shares_unsorted: Vec<SecretKeyShare> = keygen_result_receiver
         .into_iter()
         .map(|output| {
@@ -52,6 +57,7 @@ pub fn basic_correctness() {
                 .expect("keygen party finished in sad path")
         })
         .collect();
+
     debug!("end keygen");
     secret_key_shares_unsorted.sort_by(|a, b| {
         a.share()
@@ -61,21 +67,22 @@ pub fn basic_correctness() {
     });
     let secret_key_shares = VecMap::<KeygenShareId, _>::from_vec(secret_key_shares_unsorted);
 
-    // sign participants: 0,1,3 out of 0,1,2,3
-    let sign_parties = {
-        let mut sign_parties = SignParties::with_max_size(party_share_counts.party_count());
-        sign_parties.add(TypedUsize::from_usize(0)).unwrap();
-        sign_parties.add(TypedUsize::from_usize(1)).unwrap();
-        sign_parties.add(TypedUsize::from_usize(3)).unwrap();
-        sign_parties
-    };
+    // sign
+    debug!("start sign");
+
+    // Pick the subset of parties that will participate in the signing of the message (at least threshold parties are needed)
+    let mut sign_parties = SignParties::with_max_size(party_share_counts.party_count());
+    for i in 0..(threshold + 1) {
+        sign_parties.add(TypedUsize::from_usize(i)).unwrap();
+    }
+
     let keygen_share_ids = VecMap::<SignShareId, _>::from_vec(
         party_share_counts.share_id_subset(&sign_parties).unwrap(),
     );
 
-    // sign
-    debug!("start sign");
     let msg_to_sign = MessageDigest::try_from(&[42; 32][..]).unwrap();
+    
+    // Initiates signing for each participating party
     let sign_shares = keygen_share_ids.map(|keygen_share_id| {
         let secret_key_share = secret_key_shares.get(keygen_share_id).unwrap();
         new_sign(

@@ -15,7 +15,6 @@ use tofn::{
     sdk::api::{PartyShareCounts, Protocol},
 };
 use tracing::debug;
-use tracing_subscriber;
 
 // use test_env_log::test;
 // use tracing_test::traced_test; // enable logs in tests

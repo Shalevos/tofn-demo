@@ -23,7 +23,7 @@ pub mod keygen {
 
         party_share_counts
             .iter()
-            .map(|(party_id, &party_share_count)| {
+            .flat_map(|(party_id, &party_share_count)| {
                 // each party use the same secret recovery key for all its subshares
                 // TODO: generate random recovery key, write to backup file
                 let secret_recovery_key = super::dummy_secret_recovery_key(party_id);
@@ -52,7 +52,6 @@ pub mod keygen {
                     .unwrap()
                 })
             })
-            .flatten()
             .collect()
     }
 }
