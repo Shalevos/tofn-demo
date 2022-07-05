@@ -4,8 +4,9 @@ mod execute;
 use std::convert::TryFrom;
 
 use common::keygen;
-use ecdsa::{elliptic_curve::sec1::FromEncodedPoint, hazmat::VerifyPrimitive};
+use ecdsa::{elliptic_curve::sec1::{FromEncodedPoint, self, ToEncodedPoint}, hazmat::VerifyPrimitive};
 use execute::*;
+use k256::{AffinePoint, EncodedPoint};
 #[cfg(feature = "malicious")]
 use tofn::gg20::sign;
 use tofn::{
@@ -54,12 +55,19 @@ fn basic_correctness() {
     let keygen_shares = keygen::initialize_honest_parties(&party_share_counts, threshold);
     let keygen_share_outputs = execute_protocol(keygen_shares).expect("internal tofn error");
     // This extracts the actual secret shares (private keys) for each share (each party if each one only has 1 share)
+    // TODO: where to find the public key
     let secret_key_shares: VecMap<KeygenShareId, SecretKeyShare> =
         keygen_share_outputs.map2(|(keygen_share_id, keygen_share)| match keygen_share {
             Protocol::NotDone(_) => panic!("share_id {} not done yet", keygen_share_id),
             Protocol::Done(result) => result.expect("share finished with error"),
         });
-
+    // TODO: look at this for use with verifying ECDSA https://docs.rs/k256/0.6.0/k256/ecdsa/index.html , https://docs.rs/k256/0.6.0/k256/ecdsa/recoverable/index.html
+    // let pubkey_y = secret_key_shares.into_vec()[0].group().y();
+    let pubkey_encoded = secret_key_shares.clone().into_vec()[0].group().encoded_pubkey();
+    let pubkey_encoded_point = AffinePoint::from_encoded_point(&EncodedPoint::from_bytes(pubkey_encoded).unwrap()).unwrap().to_encoded_point(false);
+    let pubkey_bytes = pubkey_encoded_point.as_bytes();
+    debug!("pubkey bytes: {:?} {:?}", pubkey_bytes.len(), pubkey_bytes);
+    
     // sign
     debug!("sign...");
 
@@ -69,12 +77,19 @@ fn basic_correctness() {
         sign_parties.add(TypedUsize::from_usize(i)).unwrap();
     }
 
+    // Gets the shareids of all the chosen parties (those in the subset)
     let keygen_share_ids = VecMap::<SignShareId, _>::from_vec(
         party_share_counts.share_id_subset(&sign_parties).unwrap(),
     );
+
+    // The bytes we want to sign
+    // This should be the hash of the Tx
     let msg_to_sign = MessageDigest::try_from(&[42; 32][..]).unwrap();
+
     let sign_shares = keygen_share_ids.map(|keygen_share_id| {
+        // Here they use a map of all SecretShares to retrieve the secretshare for a given share_id, this would just be taken from the device storage
         let secret_key_share = secret_key_shares.get(keygen_share_id).unwrap();
+        // initiates signing protocol
         new_sign(
             secret_key_share.group(),
             secret_key_share.share(),
@@ -85,7 +100,10 @@ fn basic_correctness() {
         )
         .unwrap()
     });
+
+    // Now we just execute from 1 thread the protocol for all parties until it finishes
     let sign_share_outputs = execute_protocol(sign_shares).unwrap();
+    // Iterates through the result of each party, making sure they are all done, and get the result signatures (each party has its own copy of the signature - imagine this would be run by each party separately)
     let signatures = sign_share_outputs.map(|output| match output {
         Protocol::NotDone(_) => panic!("sign share not done yet"),
         Protocol::Done(result) => result.expect("sign share finished with error"),
